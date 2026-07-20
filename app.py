@@ -8,15 +8,15 @@ import io
 # 1. 웹 페이지 기본 레이아웃 및 스타일 설정
 # ==========================================
 st.set_page_config(
-    page_title="1688-쿠팡 10배 마진 소싱 분석기",
+    page_title="타오바오-쿠팡 10배 마진 소싱 분석기",
     page_icon="🚀",
     layout="wide"
 )
 
-st.title("🚀 1688")
+st.title("🚀 타오바오-쿠팡 10배 마진 소싱 분석기")
 st.markdown("""
-이 도구는 **한국어 키워드**를 입력하면 자동으로 **DeepL**을 통해 중국어로 번역하여 **1688**에서 상품 정보를 수집합니다.
-수집된 중국 현지 단가에 물류비, 관세, 수수료 등을 가산하여 **쿠팡 목표 판매가 대비 마진율**을 정교하게 분석합니다.
+이 도구는 **한국어 키워드**를 입력하면 자동으로 **DeepL**을 통해 중국어로 번역하여 **타오바오(Taobao)**에서 상품 정보를 수집합니다.
+무료 플랜에서도 차단 없이 부드럽게 작동하며, 수집된 단가에 물류비와 수수료를 가산해 **10배 마진 상품**을 발굴합니다.
 """)
 
 # ==========================================
@@ -48,37 +48,39 @@ def translate_ko_to_zh(text, api_key):
         st.error(f"DeepL 번역 중 오류가 발생했습니다: {e}")
         return None
 
-def fetch_1688_data(zh_keyword, token, limit=50):
+def fetch_taobao_data(zh_keyword, token, limit=30):
     try:
         client = ApifyClient(token)
+        # 뭏료 플랜에서 가장 잘 작동하는 타오바오 스크래퍼 양식 지정
         run_input = {
             "keywords": [zh_keyword],
-            "limit": limit,
-            "language": "zh"
+            "maxItems": limit
         }
-        # Apify 1688 Scraper 실행
-        run = client.actor("automation-lab/1688-scraper").call(run_input=run_input)
+        # Apify 대중적인 타오바오 스크래퍼 액터 호출
+        run = client.actor("janne/taobao-scraper").call(run_input=run_input)
         
-        # 'Run' 객체에서 안전하게 dataset_id를 가져오도록 수정
         dataset_id = run.get("defaultDatasetId") if isinstance(run, dict) else run.default_dataset_id
-        
         raw_items = list(client.dataset(dataset_id).iterate_items())
         return raw_items
     except Exception as e:
-        st.error(f"1688 데이터 스크래핑 중 오류가 발생했습니다: {e}")
+        st.error(f"타오바오 데이터 스크래핑 중 오류가 발생했습니다: {e}")
         return []
 
 def analyze_margins(raw_items, target_price, exchange_rate, import_overhead, fee_rate, vat):
     analyzed_list = []
     for item in raw_items:
-        title = item.get("title", "Unknown Title")
-        price_cny = item.get("price")
-        if not price_cny:
+        # 타오바오 스크래퍼 변수 명칭 매핑 (title, price)
+        title = item.get("title") or item.get("name") or "Unknown Title"
+        price_raw = item.get("price") or item.get("view_price")
+        
+        if not price_raw:
             continue
         try:
-            price_cny = float(price_cny)
+            # "¥ 15.50" 형태로 긁어오는 경우를 대비해 특수문자 제거 후 숫자로 변환
+            price_cny = float(str(price_raw).replace("¥", "").strip())
         except ValueError:
             continue
+            
         # 1) 원화 환산 순수 물품가
         pure_product_cost = price_cny * exchange_rate
         # 2) 총 예상 수입 원가 (물품가 + 개당 부대비용)
@@ -89,14 +91,15 @@ def analyze_margins(raw_items, target_price, exchange_rate, import_overhead, fee
         # 4) 마진 배수 및 순수익 계산
         net_profit_krw = real_revenue - landed_cost_krw
         margin_multiple = target_price / landed_cost_krw if landed_cost_krw > 0 else 0
+        
         analyzed_list.append({
             "상품명": title,
-            "1688 가격 (위안)": price_cny,
+            "타오바오 가격 (위안)": price_cny,
             "예상 수입원가 (원)": int(landed_cost_krw),
             "쿠팡 목표가 (원)": target_price,
             "예상 순익 (원)": int(net_profit_krw),
             "마진 배수 (배)": round(margin_multiple, 2),
-            "1688 상품 링크": item.get("productUrl", "")
+            "타오바오 링크": item.get("item_url") or item.get("url") or "https://www.taobao.com"
         })
     return analyzed_list
 
@@ -114,23 +117,22 @@ with col3:
 
 st.markdown("---")
 
-# 실행 버튼 클릭 시 파이프라인 작동
-if st.button("🚀 1688 마진 분석 실행", type="primary"):
-    # 입력값 검증
+if st.button("🚀 타오바오 마진 분석 실행", type="primary"):
     if not deepl_api_key or not apify_token:
         st.warning("왼쪽 사이드바에서 DeepL API Key와 Apify API Token을 먼저 입력해 주세요!")
     elif not search_keyword:
         st.warning("분석할 키워드를 입력해 주세요.")
     else:
-        with st.spinner("🔄 번역 및 데이터 수집 분석 중... 잠시만 기다려 주세요 (약 30초~1분 소요)"):
-            # STEP 1: 한국어 -> 중국어 번역
+        with st.spinner("🔄 타오바오 시장 조사 중... 잠시만 기다려 주세요 (약 20초~40초 소요)"):
+            # STEP 1: 번역
             zh_keyword = translate_ko_to_zh(search_keyword, deepl_api_key)
             if zh_keyword:
-                st.info(f"🇨🇳 **중국어 번역 결과:** '{zh_keyword}' 키워드로 1688을 검색합니다.")
-                # STEP 2: 1688 크롤러 가동
-                raw_data = fetch_1688_data(zh_keyword, apify_token, limit=40)
+                st.info(f"🇨🇳 **중국어 번역 결과:** '{zh_keyword}' 키워드로 타오바오를 검색합니다.")
+                
+                # STEP 2: 타오바오 크롤러 가동
+                raw_data = fetch_taobao_data(zh_keyword, apify_token, limit=30)
                 if raw_data:
-                    # STEP 3: 정밀 마진 분석 연산
+                    # STEP 3: 마진 분석
                     analyzed_results = analyze_margins(
                         raw_items=raw_data,
                         target_price=target_price,
@@ -140,48 +142,38 @@ if st.button("🚀 1688 마진 분석 실행", type="primary"):
                         vat=vat_rate
                     )
                     df = pd.DataFrame(analyzed_results)
-                    # 마진 필터링 적용
+                    
+                    # 마진 필터링
                     filtered_df = df[df["마진 배수 (배)"] >= margin_threshold]
                     filtered_df = filtered_df.sort_values(by="마진 배수 (배)", ascending=False)
-                    # 결과 화면 제공
-                    st.success(f"🎉 분석 완료! 수집된 {len(df)}개 상품 중 {len(filtered_df)}개의 아이템이 최소 {margin_threshold}배 이상의 마진 기준을 충족했습니다.")
                     
-                    # 탭 화면 레이아웃 (표 / 통계 정보)
+                    st.success(f"🎉 분석 완료! {len(df)}개 상품 중 {len(filtered_df)}개의 아이템이 최소 {margin_threshold}배 마진 조건을 충족합니다.")
+                    
                     tab1, tab2 = st.tabs(["📊 분석 결과 리스트", "📈 핵심 지표 분석"])
                     with tab1:
                         if not filtered_df.empty:
-                            # 링크 연결을 위해 Pandas Styling 적용
                             styled_df = filtered_df.copy()
-                            styled_df["1688 상품 링크"] = styled_df["1688 상품 링크"].apply(lambda x: f'<a href="{x}" target="_blank">상품 바로가기</a>' if x else "")
-                            # Streamlit HTML 출력 허용 표
+                            styled_df["타오바오 링크"] = styled_df["타오바오 링크"].apply(lambda x: f'<a href="{x}" target="_blank">상품 바로가기</a>' if x else "")
                             st.write(
                                 styled_df.to_html(escape=False, index=False),
                                 unsafe_allow_html=True
                             )
-                            # 엑셀 다운로드 기능 제공
+                            
                             output = io.BytesIO()
                             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                                filtered_df.to_excel(writer, index=False, sheet_name='소싱_마진분석_결과')
+                                filtered_df.to_excel(writer, index=False, sheet_name='타오바오_소싱_결과')
                             processed_data = output.getvalue()
                             
                             st.markdown("<br>", unsafe_allow_html=True)
                             st.download_button(
                                 label="📥 분석 결과 엑셀(.xlsx) 파일 다운로드",
                                 data=processed_data,
-                                file_name=f"1688_margin_analysis_{search_keyword}.xlsx",
+                                file_name=f"taobao_margin_analysis_{search_keyword}.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                             )
                         else:
-                            st.warning(f"설정하신 최소 마진 배수({margin_threshold}배)를 확보할 수 있는 상품이 1688 수집 결과에 존재하지 않습니다. 부대비용을 줄이거나 판매 목표가를 올려 보세요.")
+                            st.warning(f"설정하신 최소 마진 배수({margin_threshold}배)를 확보할 수 있는 상품이 타오바오 검색 결과에 없습니다.")
                     with tab2:
                         if not filtered_df.empty:
                             st.metric("🔥 분석 대상 중 최고 마진 배수", f"{filtered_df['마진 배수 (배)'].max()} 배")
                             st.metric("💰 분석 대상 중 최대 예상 순익", f"{filtered_df['예상 순익 (원)'].max():,} 원")
-                            st.write("---")
-                            st.subheader("💡 소싱 전략 제언")
-                            st.markdown("""
-                            - **마진 배수가 높게 나타난 상품**은 현지 도매가가 극도로 저렴한 아이템입니다. 단, 품질 보증 및 KC인증 여부를 반드시 사전에 수하인(대행업체)을 통해 확인하세요.
-                            - 물류비가 소싱의 핵심 변수입니다. 부피가 크거나 무거운 상품은 '개당 수입 부대비용'이 급격히 증가하므로 가볍고 부피가 작으며 조립이 필요 없는 패키지 완제품 형태를 소싱하는 것을 적극 권장합니다.
-                            """)
-                else:
-                    st.error("1688 데이터를 스크래핑하지 못했습니다. Apify 콘솔에서 타겟 Scraper의 가동 상태 및 잔여 크레딧을 점검해 주세요.")
