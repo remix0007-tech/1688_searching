@@ -56,17 +56,14 @@ def fetch_1688_data(zh_keyword, token, limit=50):
             "limit": limit,
             "language": "zh"
         }
+        # Apify 1688 Scraper 실행
+        run = client.actor("automation-lab/1688-scraper").call(run_input=run_input)
         
-# Apify 1688 Scraper 실행
-run = client.actor("automation-lab/1688-scraper").call(run_input=run_input)
+        # 'Run' 객체에서 안전하게 dataset_id를 가져오도록 수정
+        dataset_id = run.get("defaultDatasetId") if isinstance(run, dict) else run.default_dataset_id
         
-# 'Run' 객체에서 안전하게 dataset_id를 가져오도록 수정
-dataset_id = run.get("defaultDatasetId") if isinstance(run, dict) else run.default_dataset_id
-        
-raw_items = list(client.dataset(dataset_id).iterate_items())
-return raw_items
-    
-    
+        raw_items = list(client.dataset(dataset_id).iterate_items())
+        return raw_items
     except Exception as e:
         st.error(f"1688 데이터 스크래핑 중 오류가 발생했습니다: {e}")
         return []
